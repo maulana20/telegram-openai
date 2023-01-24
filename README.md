@@ -14,6 +14,8 @@ services:
       - TELEGRAM_TOKEN=
       - OPENAI_KEY=
 ```
+### openai manager
+`$ php -S 0.0.0.0:80 openai-manager.php`
 ### referensi
 - https://core.telegram.org/bots/api
 - https://openai.com/api
