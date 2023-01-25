@@ -1,7 +1,7 @@
 <?php
 class cURL
 {
-    public function sendRequest($method, $action, $data)
+    private function _request($method, $action, $data)
     {
         $curl_info = [
             CURLOPT_URL => "{$this->url}/{$action}",
@@ -12,9 +12,9 @@ class cURL
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
             CURLOPT_CUSTOMREQUEST => $method,
-            CURLOPT_POSTFIELDS => json_encode($data),
+            CURLOPT_POSTFIELDS => array_key_exists('file', $data) ? $data : json_encode($data),
             CURLOPT_HTTPHEADER => [
-                array_key_exists('file', $data) ? "multipart/form-data" : "Content-Type: application/json",
+                array_key_exists('file', $data) ? "Content-Type: multipart/form-data" : "Content-Type: application/json",
                 "Authorization: Bearer {$this->key}"
             ]
         ];
@@ -34,17 +34,17 @@ class cURL
     
     public function get($action, $data = NULL)
     {
-        return $this->sendRequest('GET', $action, $data);
+        return $this->_request('GET', $action, $data);
     }
     
     public function post($action, $data = NULL)
     {
-        return $this->sendRequest('POST', $action, $data);
+        return $this->_request('POST', $action, $data);
     }
     
     public function delete($action, $data = NULL)
     {
-        return $this->sendRequest('DELETE', $action, $data);
+        return $this->_request('DELETE', $action, $data);
     }
 }
 
@@ -60,6 +60,16 @@ class OpenAI extends cURL
     }
 }
 
+function getResponse($result, $success)
+{
+    if (!empty($result['error'])) {
+        $response = ['status' => 'error', 'info' => $result['error']['message']];
+    } else {
+        $response = ['status' => 'success', 'info' => $success];
+    }
+    return json_encode($response);
+}
+
 if ($_GET['page'] === 'files' && !empty($_POST) && $_POST['action'] === 'upload') {
     if (empty($_POST['purpose']) || empty($_FILES['file'])) {
         $response = ['status' => 'error', 'info' => 'please complete request'];
@@ -73,49 +83,27 @@ if ($_GET['page'] === 'files' && !empty($_POST) && $_POST['action'] === 'upload'
         "file" => $cFile,
     ];
     $result = [(new OpenAI()), "POST"]("files", $data);
-    
-    if (!empty($result['error'])) {
-        $response = ['status' => 'error', 'info' => $result['error']['message']];
-    } else {
-        $response = ['status' => 'success', 'info' => $result];
-    }
-    echo json_encode($response); exit();
+    echo getResponse($result, "successful uploaded"); exit();
 } else if ($_GET['page'] === 'files' && !empty($_POST) && $_POST['action'] === 'delete') {
     $result = [(new OpenAI()), "DELETE"]("files/" . $_POST['id'], []);
-    if (!empty($result['error'])) {
-        $response = ['status' => 'error', 'info' => $result['error']['message']];
-    } else if (!empty($result['deleted']) && $result['deleted'] === true) {
-        $response = ['status' => 'success'];
-    } else {
-        $response = $result;
-    }
-    echo json_encode($response); exit();
+    echo getResponse($result, "successful deleted"); exit();
 } else if ($_GET['page'] === 'files' && !empty($_POST) && $_POST['action'] === 'download') {
     $result = [(new OpenAI()), "GET"]("files/" . $_POST['id'] . "/content", []);
-    if (!empty($result['error'])) {
-        $response = ['status' => 'error', 'info' => $result['error']['message']];
+    echo getResponse($result, "successful download"); exit();
+} else if ($_GET['page'] === 'tunes' && !empty($_POST) && $_POST['action'] === 'create') {
+    if (empty($_POST['training_file'])) {
+        $response = ['status' => 'error', 'info' => 'please complete request'];
         echo json_encode($response); exit();
-    } else {
-        echo json_encode($result); exit();
     }
+    $data = [ "training_file" => $_POST['training_file'] ];
+    $result = [(new OpenAI()), "POST"]("fine-tunes", $data);
+    echo getResponse($result, "successful created"); exit();
 } else if ($_GET['page'] === 'tunes' && !empty($_POST) && $_POST['action'] === 'cancel') {
     $result = [(new OpenAI()), "POST"]("fine-tunes/" . $_POST['id'] . "/cancel", []);
-    if (!empty($result['error'])) {
-        $response = ['status' => 'error', 'info' => $result['error']['message']];
-        echo json_encode($response); exit();
-    } else {
-        echo json_encode($result); exit();
-    }
+    echo getResponse($result, "successful canceled"); exit();
 } else if ($_GET['page'] === 'models' && !empty($_POST) && $_POST['action'] === 'delete') {
     $result = [(new OpenAI()), "DELETE"]("models/" . $_POST['id'], []);
-    if (!empty($result['error'])) {
-        $response = ['status' => 'error', 'info' => $result['error']['message']];
-    } else if (!empty($result['deleted']) && $result['deleted'] === true) {
-        $response = ['status' => 'success'];
-    } else {
-        $response = $result;
-    }
-    echo json_encode($response); exit();
+    echo getResponse($result, "successful deleted"); exit();
 }
 
 function init_page()
@@ -155,7 +143,7 @@ function file_modal()
                         <input type="hidden" name="action" value="upload" />
                         <div class="form-group">
                             <label for="purpose">Purpose</label>
-                            <input type="text" class="form-control" name="purpose" id="purpose" placeholder="Enter Purpose">
+                            <input type="text" class="form-control" name="purpose" id="purpose" placeholder="fine-tune">
                         </div>
                         <div class="form-group">
                             <label for="file">File</label>
@@ -165,7 +153,7 @@ function file_modal()
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-                    <button type="button" class="btn btn-primary" onclick="uploadFile()">Upload</button>
+                    <button type="button" class="btn btn-primary" onclick="requestModal(\'files\')">Upload</button>
                 </div>
             </div>
         </div>
@@ -226,6 +214,35 @@ function file_page()
     echo file_modal();
 }
 
+function tune_modal()
+{
+    echo '<div class="modal fade" id="tuneModal" tabindex="-1" role="dialog" aria-labelledby="tuneModalLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="exampleModalLabel">Create Tune</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <form id="create-tune">
+                        <input type="hidden" name="action" value="create" />
+                        <div class="form-group">
+                            <label for="training_file">Training File</label>
+                            <input type="text" class="form-control" name="training_file" id="training_file" placeholder="file-XGinujblHPwGLSztz8cPS8XY">
+                        </div>
+                     </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" onclick="requestModal(\'tunes\')">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>';
+}
+
 function tune_page()
 {
     $result = [(new OpenAI()), "GET"]("fine-tunes");
@@ -278,6 +295,8 @@ function tune_page()
         echo '
         </tbody>
     </table>';
+    
+    echo tune_modal();
 }
 
 function model_page()
@@ -352,6 +371,10 @@ function model_page()
                     <button type="button" class="btn btn-sm btn-outline-success" data-toggle="modal" data-target="#fileModal">
                         Upload File
                     </button>
+                <?php } else if ($_GET['page'] === 'tunes') { ?>
+                    <button type="button" class="btn btn-sm btn-outline-success" data-toggle="modal" data-target="#tuneModal">
+                        Create Tune
+                    </button>
                 <?php } ?>
             </div>
         </nav>
@@ -391,19 +414,19 @@ function model_page()
           alertMessage.append(wrapper);
       };
       
-      const uploadFile = () => {
+      const requestModal = (page) => {
         $.ajax({
           type: "POST",
           processData: false,
           contentType: false,
           cache: false,
           enctype: 'multipart/form-data',
-          url: "?page=files",
-          data: $('#upload-file').jsonCustom(),
+          url: "?page=" + page,
+          data: $(page == 'files' ? '#upload-file' : '#create-tune').jsonCustom(),
           success: function (result) {
             result = JSON.parse(result);
-            $('#fileModal').modal('hide');
-            alert(result.status == "success" ? "successful upload" : result.info, result.status == "success" ? "success" : "danger");
+            $(page == 'files' ? '#fileModal' : '#tuneModal').modal('hide');
+            alert(result.info, result.status == "success" ? "success" : "danger");
           }
         });
       };
